@@ -20,15 +20,15 @@ notes/
 .claude/
 .grok/
 
-# Data & experiment artifacts
-data/
-outputs/
-wandb/
-runs/
+# Data & experiment artifacts (repo-root only — do NOT ignore src/probes_rh/data/)
+/data/
+/outputs/
+/wandb/
+/runs/
 *.pt
 *.bin
 *.safetensors
-checkpoints/
+/checkpoints/
 
 # OS / editor
 .DS_Store

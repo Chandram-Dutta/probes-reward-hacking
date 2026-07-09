@@ -1,0 +1,154 @@
+"""GRPO training against the misspecified proxy reward (gold never used here)."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from datasets import Dataset
+from peft import LoraConfig
+from transformers import AutoTokenizer
+from trl import GRPOConfig, GRPOTrainer
+
+from probes_rh.data.prep_prompts import load_jsonl
+from probes_rh.rewards.proxy import ProxyRewardConfig, make_proxy_reward_fn
+
+
+DEFAULT_POLICY = "Qwen/Qwen3-0.6B"
+
+
+@dataclass
+class Exp3TrainConfig:
+    model_id: str = DEFAULT_POLICY
+    data_path: str = "data/exp3/prompts_trl.jsonl"
+    output_dir: str = "outputs/exp3a_grpo"
+    max_steps: int = 100
+    per_device_train_batch_size: int = 1
+    gradient_accumulation_steps: int = 4
+    num_generations: int = 4
+    max_completion_length: int = 256
+    max_prompt_length: int = 512
+    learning_rate: float = 1e-5
+    logging_steps: int = 1
+    save_steps: int = 25
+    seed: int = 42
+    use_lora: bool = True
+    lora_r: int = 16
+    lora_alpha: int = 32
+    bf16: bool = False
+    fp16: bool = True
+    # Qwen3: disable thinking for stable short completions
+    enable_thinking: bool = False
+    loss_type: str = "dr_grpo"
+    beta: float = 0.0
+    report_to: str = "none"
+    # proxy weights
+    w_length: float = 1.0
+    w_agreement: float = 1.5
+    w_confidence: float = 1.0
+    w_politeness: float = 0.75
+
+
+def build_dataset(data_path: str) -> Dataset:
+    rows = load_jsonl(Path(data_path))
+    # keep only fields TRL needs + id for later joins
+    cleaned = []
+    for r in rows:
+        cleaned.append(
+            {
+                "prompt": r["prompt"],
+                "prompt_id": r.get("prompt_id", ""),
+            }
+        )
+    return Dataset.from_list(cleaned)
+
+
+def build_trainer(cfg: Exp3TrainConfig) -> GRPOTrainer:
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    proxy_cfg = ProxyRewardConfig(
+        w_length=cfg.w_length,
+        w_agreement=cfg.w_agreement,
+        w_confidence=cfg.w_confidence,
+        w_politeness=cfg.w_politeness,
+    )
+    reward_fn = make_proxy_reward_fn(proxy_cfg)
+
+    grpo_args = GRPOConfig(
+        output_dir=cfg.output_dir,
+        max_steps=cfg.max_steps,
+        per_device_train_batch_size=cfg.per_device_train_batch_size,
+        gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+        num_generations=cfg.num_generations,
+        max_completion_length=cfg.max_completion_length,
+        max_prompt_length=cfg.max_prompt_length,
+        learning_rate=cfg.learning_rate,
+        logging_steps=cfg.logging_steps,
+        save_steps=cfg.save_steps,
+        seed=cfg.seed,
+        bf16=cfg.bf16,
+        fp16=cfg.fp16,
+        report_to=cfg.report_to,
+        remove_unused_columns=False,
+        chat_template_kwargs={"enable_thinking": cfg.enable_thinking},
+        loss_type=cfg.loss_type,
+        beta=cfg.beta,
+        log_completions=True,
+    )
+
+    peft_config = None
+    if cfg.use_lora:
+        peft_config = LoraConfig(
+            r=cfg.lora_r,
+            lora_alpha=cfg.lora_alpha,
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        )
+
+    dataset = build_dataset(cfg.data_path)
+
+    trainer = GRPOTrainer(
+        model=cfg.model_id,
+        reward_funcs=reward_fn,
+        args=grpo_args,
+        train_dataset=dataset,
+        processing_class=tokenizer,
+        peft_config=peft_config,
+    )
+    return trainer
+
+
+def save_run_config(cfg: Exp3TrainConfig, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(asdict(cfg), indent=2), encoding="utf-8")
+
+
+def train(cfg: Exp3TrainConfig | None = None) -> dict[str, Any]:
+    cfg = cfg or Exp3TrainConfig()
+    out = Path(cfg.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    trainer = build_trainer(cfg)
+    is_main = trainer.accelerator.is_main_process
+    if is_main:
+        save_run_config(cfg, out / "train_config.json")
+        n = trainer.accelerator.num_processes
+        print(f"GRPO training with {n} process(es) / GPU(s)")
+
+    result = trainer.train()
+    # all ranks must participate in save for sharded state; final adapter on main
+    trainer.save_model(str(out / "final"))
+    trainer.accelerator.wait_for_everyone()
+
+    metrics = dict(result.metrics) if result is not None else {}
+    if is_main:
+        (out / "train_metrics.json").write_text(
+            json.dumps(metrics, indent=2), encoding="utf-8"
+        )
+    return metrics

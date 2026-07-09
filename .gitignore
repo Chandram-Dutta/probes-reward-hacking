@@ -1,0 +1,44 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+.venv/
+
+# Local / private project files (do not push)
+AGENTS.md
+notes/
+.claude/
+.grok/
+
+# Data & experiment artifacts
+data/
+outputs/
+wandb/
+runs/
+*.pt
+*.bin
+*.safetensors
+checkpoints/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Env / secrets
+.env
+.env.*

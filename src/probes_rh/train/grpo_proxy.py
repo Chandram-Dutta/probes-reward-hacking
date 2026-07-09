@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ class Exp3TrainConfig:
     gradient_accumulation_steps: int = 4
     num_generations: int = 4
     max_completion_length: int = 256
+    # Kept for docs / older TRL; filtered out if GRPOConfig rejects it.
     max_prompt_length: int = 512
     learning_rate: float = 1e-5
     logging_steps: int = 1
@@ -65,6 +67,22 @@ def build_dataset(data_path: str) -> Dataset:
     return Dataset.from_list(cleaned)
 
 
+def _filter_kwargs(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Drop kwargs unsupported by the installed TRL version."""
+    try:
+        accepted = set(inspect.signature(cls.__init__).parameters.keys())
+    except (TypeError, ValueError):
+        return kwargs
+    accepted.discard("self")
+    # dataclasses / TrainingArguments often accept **kwargs via inheritance;
+    # still filter unknowns that raise TypeError in strict inits.
+    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+    dropped = sorted(set(kwargs) - set(filtered))
+    if dropped:
+        print(f"GRPOConfig: ignoring unsupported args for this TRL: {dropped}")
+    return filtered
+
+
 def build_trainer(cfg: Exp3TrainConfig) -> GRPOTrainer:
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -78,27 +96,36 @@ def build_trainer(cfg: Exp3TrainConfig) -> GRPOTrainer:
     )
     reward_fn = make_proxy_reward_fn(proxy_cfg)
 
-    grpo_args = GRPOConfig(
-        output_dir=cfg.output_dir,
-        max_steps=cfg.max_steps,
-        per_device_train_batch_size=cfg.per_device_train_batch_size,
-        gradient_accumulation_steps=cfg.gradient_accumulation_steps,
-        num_generations=cfg.num_generations,
-        max_completion_length=cfg.max_completion_length,
-        max_prompt_length=cfg.max_prompt_length,
-        learning_rate=cfg.learning_rate,
-        logging_steps=cfg.logging_steps,
-        save_steps=cfg.save_steps,
-        seed=cfg.seed,
-        bf16=cfg.bf16,
-        fp16=cfg.fp16,
-        report_to=cfg.report_to,
-        remove_unused_columns=False,
-        chat_template_kwargs={"enable_thinking": cfg.enable_thinking},
-        loss_type=cfg.loss_type,
-        beta=cfg.beta,
-        log_completions=True,
+    # TRL requires generation_batch_size % num_generations == 0.
+    generation_batch_size = max(
+        cfg.num_generations,
+        cfg.per_device_train_batch_size * cfg.num_generations,
     )
+
+    # TRL 0.x used max_prompt_length; TRL 1.7+ dropped it — filter handles that.
+    raw_args: dict[str, Any] = {
+        "output_dir": cfg.output_dir,
+        "max_steps": cfg.max_steps,
+        "per_device_train_batch_size": cfg.per_device_train_batch_size,
+        "gradient_accumulation_steps": cfg.gradient_accumulation_steps,
+        "num_generations": cfg.num_generations,
+        "generation_batch_size": generation_batch_size,
+        "max_completion_length": cfg.max_completion_length,
+        "max_prompt_length": cfg.max_prompt_length,
+        "learning_rate": cfg.learning_rate,
+        "logging_steps": cfg.logging_steps,
+        "save_steps": cfg.save_steps,
+        "seed": cfg.seed,
+        "bf16": cfg.bf16,
+        "fp16": cfg.fp16,
+        "report_to": cfg.report_to,
+        "remove_unused_columns": False,
+        "chat_template_kwargs": {"enable_thinking": cfg.enable_thinking},
+        "loss_type": cfg.loss_type,
+        "beta": cfg.beta,
+        "log_completions": True,
+    }
+    grpo_args = GRPOConfig(**_filter_kwargs(GRPOConfig, raw_args))
 
     peft_config = None
     if cfg.use_lora:
@@ -113,14 +140,21 @@ def build_trainer(cfg: Exp3TrainConfig) -> GRPOTrainer:
 
     dataset = build_dataset(cfg.data_path)
 
-    trainer = GRPOTrainer(
-        model=cfg.model_id,
-        reward_funcs=reward_fn,
-        args=grpo_args,
-        train_dataset=dataset,
-        processing_class=tokenizer,
-        peft_config=peft_config,
-    )
+    trainer_kwargs: dict[str, Any] = {
+        "model": cfg.model_id,
+        "reward_funcs": reward_fn,
+        "args": grpo_args,
+        "train_dataset": dataset,
+        "peft_config": peft_config,
+    }
+    # TRL renamed tokenizer -> processing_class
+    sig = inspect.signature(GRPOTrainer.__init__)
+    if "processing_class" in sig.parameters:
+        trainer_kwargs["processing_class"] = tokenizer
+    elif "tokenizer" in sig.parameters:
+        trainer_kwargs["tokenizer"] = tokenizer
+
+    trainer = GRPOTrainer(**trainer_kwargs)
     return trainer
 
 

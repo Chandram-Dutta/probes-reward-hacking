@@ -19,7 +19,24 @@ See [`notes/exp3_unverifiable_proxy.md`](notes/exp3_unverifiable_proxy.md).
 
 ```bash
 uv sync
+# or: pip install -e .
 ```
+
+### Kaggle (quick)
+
+```python
+!git clone https://github.com/Chandram-Dutta/probes-reward-hacking.git
+%cd probes-reward-hacking
+
+# make package importable (either works)
+!pip install -e . -q
+# scripts also bootstrap src/ onto PYTHONPATH if install is skipped
+
+!python scripts/prepare_data.py --max-prompts 2000
+```
+
+If you see `No module named 'probes_rh'`, you are not running from the repo
+root or the clone failed. Re-run from `probes-reward-hacking/` after clone.
 
 ## Pipeline
 

@@ -4,7 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _bootstrap import ensure_import_path
+
+ensure_import_path()
 
 from probes_rh.data.prep_prompts import (
     load_instruction_prompts,

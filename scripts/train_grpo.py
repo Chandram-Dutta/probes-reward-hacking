@@ -14,6 +14,12 @@ import os
 import subprocess
 import sys
 
+# path bootstrap lives next to this script (works even without pip install -e .)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _bootstrap import ensure_import_path  # noqa: E402
+
+ensure_import_path()
+
 
 def _already_distributed() -> bool:
     # set by accelerate / torchrun / torch.distributed

@@ -5,7 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _bootstrap import ensure_import_path
+
+ensure_import_path()
 
 import numpy as np
 from tqdm import tqdm

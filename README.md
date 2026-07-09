@@ -27,16 +27,23 @@ uv sync
 ```python
 !git clone https://github.com/Chandram-Dutta/probes-reward-hacking.git
 %cd probes-reward-hacking
+!git pull
 
-# make package importable (either works)
-!pip install -e . -q
-# scripts also bootstrap src/ onto PYTHONPATH if install is skipped
+# fixes Kaggle's old torchao (breaks peft LoRA) + installs deps
+!python scripts/kaggle_setup.py
 
 !python scripts/prepare_data.py --max-prompts 2000
+!python scripts/train_grpo.py --max-steps 100 --output-dir /kaggle/working/outputs/exp3a_grpo
 ```
 
-If you see `No module named 'probes_rh'`, you are not running from the repo
-root or the clone failed. Re-run from `probes-reward-hacking/` after clone.
+If LoRA fails with `incompatible version of torchao`, run:
+
+```python
+!pip uninstall -y torchao
+# or: !python scripts/kaggle_setup.py
+```
+
+If you see `No module named 'probes_rh'`, re-clone / `git pull` from repo root.
 
 ## Pipeline
 

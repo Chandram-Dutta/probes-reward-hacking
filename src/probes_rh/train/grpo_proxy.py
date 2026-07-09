@@ -83,7 +83,54 @@ def _filter_kwargs(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
     return filtered
 
 
+def _fix_torchao_for_peft() -> None:
+    """Kaggle ships torchao 0.10; recent peft requires >=0.16 or no torchao.
+
+    If an incompatible torchao is present, peft raises during LoRA inject.
+    Prefer uninstalling torchao (we don't need it) over a heavy upgrade.
+    """
+    try:
+        import importlib.metadata as md
+
+        ver = md.version("torchao")
+    except Exception:
+        return
+
+    def _parse(v: str) -> tuple[int, ...]:
+        parts = []
+        for p in v.split(".")[:3]:
+            try:
+                parts.append(int("".join(c for c in p if c.isdigit()) or "0"))
+            except ValueError:
+                parts.append(0)
+        return tuple(parts)
+
+    if _parse(ver) >= (0, 16, 0):
+        return
+
+    print(
+        f"Found incompatible torchao=={ver} (peft wants >=0.16). "
+        "Uninstalling torchao so LoRA can load..."
+    )
+    import subprocess
+    import sys
+
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "uninstall", "-y", "torchao"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    # clear any cached import
+    for key in list(sys.modules):
+        if key == "torchao" or key.startswith("torchao."):
+            del sys.modules[key]
+    print("torchao uninstalled. Continuing with LoRA.")
+
+
 def build_trainer(cfg: Exp3TrainConfig) -> GRPOTrainer:
+    if cfg.use_lora:
+        _fix_torchao_for_peft()
+
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

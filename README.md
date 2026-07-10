@@ -6,7 +6,21 @@ Linear probes for reward hacking under **proxy / unverifiable** rewards.
 
 Requires [Kaggle CLI](https://github.com/Kaggle/kaggle-cli) (`kaggle` authenticated).
 
-### Exp 3c — mid-training residual curve (recommended next)
+### Exp 3d — residual probe transfer (after 3c)
+
+```bash
+# needs results/exp3c/outputs/exp3c_midcurve from Exp 3c
+bash scripts/kaggle_cli_run_exp3d.sh
+```
+
+Fits residual probes at each GRPO checkpoint and evaluates them on every other step (frozen transfer matrix + base-probe trajectory).
+
+```bash
+kaggle kernels status chandramdutta/probes-rh-exp3d
+kaggle kernels output chandramdutta/probes-rh-exp3d -p results/exp3d
+```
+
+### Exp 3c — mid-training residual curve
 
 ```bash
 bash scripts/kaggle_cli_run_exp3c.sh

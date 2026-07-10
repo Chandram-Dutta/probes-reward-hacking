@@ -22,6 +22,38 @@ class ProbeResult:
     layer: int | None = None
 
 
+def make_linear_probe(C: float = 1.0):
+    """StandardScaler + balanced logistic regression (used for fit + transfer)."""
+    return make_pipeline(
+        StandardScaler(),
+        LogisticRegression(max_iter=2000, C=C, class_weight="balanced"),
+    )
+
+
+def fit_linear_probe_full(
+    X: np.ndarray,
+    y: np.ndarray,
+    C: float = 1.0,
+):
+    """Fit probe on all rows (for transfer: train on source, eval on target)."""
+    if len(np.unique(y)) < 2:
+        raise ValueError("need both classes to fit probe")
+    clf = make_linear_probe(C=C)
+    clf.fit(X, y)
+    return clf
+
+
+def probe_auc(clf, X: np.ndarray, y: np.ndarray) -> float:
+    if len(np.unique(y)) < 2:
+        return float("nan")
+    proba = clf.predict_proba(X)[:, 1]
+    return float(roc_auc_score(y, proba))
+
+
+def probe_proba(clf, X: np.ndarray) -> np.ndarray:
+    return clf.predict_proba(X)[:, 1]
+
+
 def train_linear_probe(
     X: np.ndarray,
     y: np.ndarray,
@@ -36,16 +68,31 @@ def train_linear_probe(
 
     splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
     train_idx, test_idx = next(splitter.split(X, y, groups))
-    clf = make_pipeline(
-        StandardScaler(),
-        LogisticRegression(max_iter=2000, C=C, class_weight="balanced"),
-    )
+    clf = make_linear_probe(C=C)
     clf.fit(X[train_idx], y[train_idx])
     if len(np.unique(y[test_idx])) < 2:
         return float("nan"), len(train_idx), len(test_idx)
     proba = clf.predict_proba(X[test_idx])[:, 1]
     auc = float(roc_auc_score(y[test_idx], proba))
     return auc, len(train_idx), len(test_idx)
+
+
+def select_best_layer(
+    layer_features: dict[int, np.ndarray],
+    y: np.ndarray,
+    groups: np.ndarray,
+    seed: int = 0,
+) -> tuple[int | None, float]:
+    """Pick layer with highest group-split AUC on the source pool."""
+    best_layer, best_auc = None, float("-inf")
+    for layer, X in sorted(layer_features.items()):
+        auc, _, _ = train_linear_probe(X, y, groups, seed=seed)
+        if auc == auc and auc > best_auc:
+            best_auc = float(auc)
+            best_layer = layer
+    if best_layer is None:
+        return None, float("nan")
+    return best_layer, best_auc
 
 
 def evaluate_layer_probes(

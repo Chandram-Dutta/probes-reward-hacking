@@ -1,10 +1,10 @@
 """Kaggle script kernel: Exp 3b residual probes from Exp 3a checkpoint.
 
-Inputs (Datasets):
-  - probes-rh-src          → source tree
-  - probes-rh-exp3a-ckpt   → exp3a_checkpoint.zip
+Datasets:
+  - chandramdutta/probes-rh-src
+  - chandramdutta/probes-rh-exp3a-ckpt
 
-Outputs written under /kaggle/working/ for `kaggle kernels output`.
+Use dual T4 when available (score_rollouts puts policy on cuda:0, gold on cuda:1).
 """
 
 from __future__ import annotations
@@ -18,16 +18,9 @@ import zipfile
 from pathlib import Path
 
 WORK = Path("/kaggle/working")
-SRC_DS = Path("/kaggle/input/probes-rh-src/probes-reward-hacking")
-# dataset may store files at root of input
-if not SRC_DS.exists():
-    # try flat layout
-    candidates = list(Path("/kaggle/input/probes-rh-src").rglob("pyproject.toml"))
-    if candidates:
-        SRC_DS = candidates[0].parent
-CKPT_DS = Path("/kaggle/input/probes-rh-exp3a-ckpt")
-REPO = WORK / "probes-reward-hacking"
+INPUT = Path("/kaggle/input")
 OUT = WORK / "outputs" / "exp3a_grpo"
+REPO = WORK / "probes-reward-hacking"
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -35,22 +28,67 @@ def run(cmd: list[str], cwd: Path | None = None) -> None:
     subprocess.check_call(cmd, cwd=str(cwd) if cwd else None)
 
 
+def find_repo_root() -> Path:
+    """Locate uploaded source (layout varies: nested folder vs flat dataset)."""
+    # preferred layouts
+    candidates = [
+        INPUT / "probes-rh-src" / "probes-reward-hacking",
+        INPUT / "probes-rh-src",
+        INPUT / "datasets" / "chandramdutta" / "probes-rh-src" / "probes-reward-hacking",
+        INPUT / "datasets" / "chandramdutta" / "probes-rh-src",
+    ]
+    for c in candidates:
+        if (c / "pyproject.toml").exists() and (c / "scripts").is_dir():
+            return c
+    # search
+    for p in INPUT.rglob("pyproject.toml"):
+        root = p.parent
+        if (root / "scripts" / "score_rollouts.py").exists():
+            return root
+    raise SystemExit(
+        f"could not find source repo under {INPUT}; tree={list(INPUT.rglob('*'))[:50]}"
+    )
+
+
+def find_adapter() -> Path:
+    """Locate LoRA adapter dir (from zip extract or already-unzipped dataset)."""
+    # dataset may already contain exp3a_grpo/final/*
+    for p in INPUT.rglob("adapter_model.safetensors"):
+        return p.parent
+    # or a zip to extract
+    for z in INPUT.rglob("exp3a_checkpoint.zip"):
+        dest = WORK / "outputs"
+        dest.mkdir(parents=True, exist_ok=True)
+        print("extracting", z, "->", dest, flush=True)
+        with zipfile.ZipFile(z, "r") as zf:
+            zf.extractall(dest)
+        for p in dest.rglob("adapter_model.safetensors"):
+            return p.parent
+    raise SystemExit("adapter_model.safetensors / exp3a_checkpoint.zip not found in inputs")
+
+
 def main() -> None:
-    print("cuda devices:", os.environ.get("CUDA_VISIBLE_DEVICES"), flush=True)
+    print("CUDA_VISIBLE_DEVICES=", os.environ.get("CUDA_VISIBLE_DEVICES"), flush=True)
     try:
         import torch
 
-        print("torch.cuda.device_count()", torch.cuda.device_count(), flush=True)
+        n = torch.cuda.device_count()
+        print("torch.cuda.device_count()=", n, flush=True)
+        for i in range(n):
+            print(f"  gpu{i}:", torch.cuda.get_device_name(i), flush=True)
     except Exception as e:
-        print("torch check failed", e, flush=True)
+        print("torch check failed:", e, flush=True)
 
-    if not SRC_DS.exists():
-        raise SystemExit(f"missing source dataset at {SRC_DS}; inputs={list(Path('/kaggle/input').iterdir())}")
+    print("input tree (top):", flush=True)
+    if INPUT.exists():
+        for p in sorted(INPUT.rglob("*"))[:80]:
+            print(" ", p, flush=True)
 
+    src = find_repo_root()
+    print("source repo:", src, flush=True)
     if REPO.exists():
         shutil.rmtree(REPO)
-    shutil.copytree(SRC_DS, REPO)
-    print("repo copied from", SRC_DS, flush=True)
+    shutil.copytree(src, REPO)
 
     # deps
     run([sys.executable, "-m", "pip", "uninstall", "-y", "torchao"])
@@ -69,32 +107,32 @@ def main() -> None:
             "datasets>=3.0.0",
             "scikit-learn>=1.5.0",
             "safetensors",
+            "tqdm",
         ]
+    )
+    # Prefer PYTHONPATH=src over editable install (avoids incomplete wheel layouts).
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(REPO / "src") + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
     run([sys.executable, "-m", "pip", "install", "-q", "-e", "."], cwd=REPO)
 
-    # restore checkpoint
-    OUT.mkdir(parents=True, exist_ok=True)
-    zips = list(CKPT_DS.rglob("exp3a_checkpoint.zip")) if CKPT_DS.exists() else []
-    if not zips:
-        zips = list(Path("/kaggle/input").rglob("exp3a_checkpoint.zip"))
-    if not zips:
-        raise SystemExit("exp3a_checkpoint.zip not found in inputs")
-    ckpt_zip = zips[0]
-    print("using checkpoint", ckpt_zip, flush=True)
-    with zipfile.ZipFile(ckpt_zip, "r") as zf:
-        zf.extractall(WORK / "outputs")
-    adapter = OUT / "final"
-    if not (adapter / "adapter_model.safetensors").exists():
-        # sometimes nested
-        found = list((WORK / "outputs").rglob("adapter_model.safetensors"))
-        if not found:
-            raise SystemExit("adapter missing after unzip")
-        adapter = found[0].parent
-    print("adapter:", adapter, flush=True)
+    # sanity: package data must import
+    subprocess.check_call(
+        [sys.executable, "-c", "import probes_rh.data.prep_prompts as p; print('import ok', p.__file__)"],
+        cwd=str(REPO),
+        env=env,
+    )
 
-    # data
-    run(
+    adapter = find_adapter()
+    print("adapter:", adapter, flush=True)
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    def run_repo(args: list[str]) -> None:
+        print("+", " ".join(args), flush=True)
+        subprocess.check_call(args, cwd=str(REPO), env=env)
+
+    run_repo(
         [
             sys.executable,
             "scripts/prepare_data.py",
@@ -103,11 +141,10 @@ def main() -> None:
             "--out-dir",
             "data/exp3",
         ],
-        cwd=REPO,
     )
 
     rollouts = OUT / "rollouts_3b.jsonl"
-    run(
+    run_repo(
         [
             sys.executable,
             "scripts/score_rollouts.py",
@@ -122,80 +159,40 @@ def main() -> None:
             "--limit",
             "1024",
         ],
-        cwd=REPO,
     )
 
-    probe_out = OUT / "probe_results_residual.json"
-    run(
-        [
-            sys.executable,
-            "scripts/run_probes.py",
-            "--rollouts",
-            str(rollouts),
-            "--model",
-            "Qwen/Qwen3-0.6B",
-            "--adapter",
-            str(adapter),
-            "--label-mode",
-            "residual",
-            "--out",
-            str(probe_out),
-        ],
-        cwd=REPO,
-    )
-
-    # also quantile for comparison (no second activation pass would be nicer; re-run is ok)
-    probe_q = OUT / "probe_results_quantile.json"
-    run(
-        [
-            sys.executable,
-            "scripts/run_probes.py",
-            "--rollouts",
-            str(rollouts),
-            "--model",
-            "Qwen/Qwen3-0.6B",
-            "--adapter",
-            str(adapter),
-            "--label-mode",
-            "quantile",
-            "--out",
-            str(probe_q),
-        ],
-        cwd=REPO,
-    )
-
-    # summary for logs
-    for p in (probe_out, probe_q):
-        if p.exists():
-            data = json.loads(p.read_text())
-            print("\n====", p.name, "====", flush=True)
-            print(
-                "n=",
-                data.get("n"),
-                "hack_rate=",
-                data.get("hack_rate"),
-                "mode=",
-                data.get("label_mode"),
-                flush=True,
-            )
-            rows = sorted(
-                data["results"],
-                key=lambda x: -(x["auc"] if x["auc"] == x["auc"] else -1),
-            )
-            for r in rows[:12]:
-                print(f"  {r['name']:40s} {r['auc']:.3f}", flush=True)
-
-    # light copy to working root for easy download
-    for name in (
-        "rollouts_3b.jsonl",
-        "probe_results_residual.json",
-        "probe_results_quantile.json",
+    for mode, name in (
+        ("residual", "probe_results_residual.json"),
+        ("quantile", "probe_results_quantile.json"),
     ):
-        src = OUT / name
-        if src.exists():
-            shutil.copy2(src, WORK / name)
-            print("published", WORK / name, flush=True)
+        outp = OUT / name
+        run_repo(
+            [
+                sys.executable,
+                "scripts/run_probes.py",
+                "--rollouts",
+                str(rollouts),
+                "--model",
+                "Qwen/Qwen3-0.6B",
+                "--adapter",
+                str(adapter),
+                "--label-mode",
+                mode,
+                "--out",
+                str(outp),
+            ],
+        )
+        data = json.loads(outp.read_text())
+        print(f"\n==== {name} mode={mode} n={data.get('n')} hack_rate={data.get('hack_rate')} ====", flush=True)
+        rows = sorted(
+            data["results"],
+            key=lambda x: -(x["auc"] if x["auc"] == x["auc"] else -1),
+        )
+        for r in rows[:15]:
+            print(f"  {r['name']:40s} {r['auc']:.3f}", flush=True)
+        shutil.copy2(outp, WORK / name)
 
+    shutil.copy2(rollouts, WORK / "rollouts_3b.jsonl")
     print("DONE exp3b", flush=True)
 
 

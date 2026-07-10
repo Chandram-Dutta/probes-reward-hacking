@@ -38,8 +38,9 @@ else
   kaggle datasets create -p "$CKPT_DS" --dir-mode zip
 fi
 
-echo "== push kernel (starts GPU run) =="
-kaggle kernels push -p "$KERN"
+echo "== push kernel on GPU T4 (Kaggle maps NvidiaTeslaT4 → T4 x2 on free tier) =="
+# CLI accelerator flag; metadata also sets machine_shape=NvidiaTeslaT4
+kaggle kernels push -p "$KERN" --accelerator NvidiaTeslaT4
 
 echo "== status =="
 kaggle kernels status chandramdutta/probes-rh-exp3b || true

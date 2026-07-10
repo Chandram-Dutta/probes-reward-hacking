@@ -8,6 +8,8 @@
   "enable_gpu": true,
   "enable_tpu": false,
   "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "keywords": ["gpu"],
   "dataset_sources": [
     "chandramdutta/probes-rh-src",
     "chandramdutta/probes-rh-exp3a-ckpt"

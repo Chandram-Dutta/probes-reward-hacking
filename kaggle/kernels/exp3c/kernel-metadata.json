@@ -1,0 +1,19 @@
+{
+  "id": "chandramdutta/probes-rh-exp3c",
+  "title": "probes-rh-exp3c",
+  "code_file": "run_exp3c.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "keywords": ["gpu"],
+  "dataset_sources": [
+    "chandramdutta/probes-rh-src"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": []
+}

@@ -87,6 +87,12 @@ def main() -> None:
     p.add_argument("--grad-accum", type=int, default=4)
     p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--save-steps", type=int, default=25)
+    p.add_argument(
+        "--save-total-limit",
+        type=int,
+        default=10,
+        help="Max checkpoints to keep (None-like: use a high number)",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-lora", action="store_true")
     p.add_argument("--bf16", action="store_true")
@@ -114,6 +120,7 @@ def main() -> None:
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         save_steps=args.save_steps,
+        save_total_limit=args.save_total_limit,
         seed=args.seed,
         use_lora=not args.no_lora,
         bf16=args.bf16,

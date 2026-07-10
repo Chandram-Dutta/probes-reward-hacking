@@ -11,10 +11,12 @@ KERN="$ROOT/kaggle/kernels/exp3b"
 echo "== packaging source dataset =="
 rm -rf "$SRC_DS/probes-reward-hacking"
 mkdir -p "$SRC_DS"
+# Exclude only repo-root data/ artifacts — never src/probes_rh/data/
 rsync -a \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
   --exclude '*.zip' --exclude 'notes' --exclude 'AGENTS.md' \
-  --exclude 'kaggle' --exclude 'exp3a_*' --exclude 'outputs' --exclude 'data' \
+  --exclude 'kaggle' --exclude 'exp3a_*' --exclude 'outputs' \
+  --exclude '/data/' \
   ./ "$SRC_DS/probes-reward-hacking/"
 
 echo "== packaging checkpoint dataset =="

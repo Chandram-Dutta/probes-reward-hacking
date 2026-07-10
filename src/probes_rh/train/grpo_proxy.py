@@ -42,6 +42,8 @@ class Exp3TrainConfig:
     learning_rate: float = 1e-5
     logging_steps: int = 1
     save_steps: int = 25
+    save_total_limit: int | None = 10
+    save_only_model: bool = True
     seed: int = 42
     use_lora: bool = True
     lora_r: int = 16
@@ -168,7 +170,10 @@ def build_trainer(cfg: Exp3TrainConfig) -> GRPOTrainer:
         "max_prompt_length": cfg.max_prompt_length,
         "learning_rate": cfg.learning_rate,
         "logging_steps": cfg.logging_steps,
+        "save_strategy": "steps",
         "save_steps": cfg.save_steps,
+        "save_total_limit": cfg.save_total_limit,
+        "save_only_model": cfg.save_only_model,
         "seed": cfg.seed,
         "bf16": cfg.bf16,
         "fp16": cfg.fp16,

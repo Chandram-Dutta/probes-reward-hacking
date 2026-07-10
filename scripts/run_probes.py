@@ -108,7 +108,12 @@ def main() -> None:
     )
 
     baseline_results = evaluate_feature_baselines(
-        feat_mat_ext, feat_names_ext, y, groups, seed=args.seed
+        feat_mat_ext,
+        feat_names_ext,
+        y,
+        groups,
+        seed=args.seed,
+        combo_exclude=("gold_residual",),
     )
 
     model, tok = load_policy(args.model, adapter_path=args.adapter)

@@ -75,6 +75,7 @@ def evaluate_feature_baselines(
     y: np.ndarray,
     groups: np.ndarray,
     seed: int = 0,
+    combo_exclude: tuple[str, ...] = (),
 ) -> list[ProbeResult]:
     results = []
     # each single feature as 1-d probe
@@ -84,8 +85,12 @@ def evaluate_feature_baselines(
         results.append(
             ProbeResult(name=f"baseline_{name}", auc=auc, n_train=n_tr, n_test=n_te)
         )
-    # all surface features together
-    auc, n_tr, n_te = train_linear_probe(feature_matrix, y, groups, seed=seed)
+    # all surface features together; combo_exclude keeps gold-derived columns
+    # (e.g. gold_residual, which residual labels are thresholded on) out of the combo
+    combo_cols = [j for j, n in enumerate(feature_names) if n not in combo_exclude]
+    auc, n_tr, n_te = train_linear_probe(
+        feature_matrix[:, combo_cols], y, groups, seed=seed
+    )
     results.append(
         ProbeResult(name="baseline_all_surface", auc=auc, n_train=n_tr, n_test=n_te)
     )

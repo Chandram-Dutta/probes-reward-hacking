@@ -70,12 +70,16 @@ def _maybe_relaunch_multi_gpu(argv: list[str]) -> None:
 def main() -> None:
     _maybe_relaunch_multi_gpu(sys.argv[1:])
 
-    from probes_rh.train.grpo_proxy import Exp3TrainConfig, train
+    from probes_rh.train.grpo_proxy import Exp3TrainConfig, default_train_output_dir, train
 
     p = argparse.ArgumentParser(description="Exp 3a GRPO vs proxy reward")
     p.add_argument("--model", default="Qwen/Qwen3-0.6B")
     p.add_argument("--data", default="data/exp3/prompts_trl.jsonl")
-    p.add_argument("--output-dir", default="outputs/exp3a_grpo")
+    p.add_argument(
+        "--output-dir",
+        default=None,
+        help="Default: /kaggle/working/outputs/exp3a_grpo on Kaggle, else outputs/exp3a_grpo",
+    )
     p.add_argument("--max-steps", type=int, default=100)
     p.add_argument("--num-generations", type=int, default=4)
     p.add_argument("--max-completion-length", type=int, default=256)
@@ -102,7 +106,7 @@ def main() -> None:
     cfg = Exp3TrainConfig(
         model_id=args.model,
         data_path=args.data,
-        output_dir=args.output_dir,
+        output_dir=args.output_dir or default_train_output_dir(),
         max_steps=args.max_steps,
         num_generations=args.num_generations,
         max_completion_length=args.max_completion_length,

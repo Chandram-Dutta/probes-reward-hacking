@@ -5,8 +5,10 @@ Gold RM is never used in training.
 
 Dual-GPU (Kaggle T4 x2): by default
   - policy generation on cuda:0
-  - gold RM on cuda:1 (loaded in parallel, no free/reload)
+  - gold RM on cuda:1
 Falls back to a single device when only one GPU is available.
+
+Writes under /kaggle/working/outputs/... on Kaggle when --out is relative.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from probes_rh.chat import apply_chat_prompt, strip_think
+from probes_rh.paths import exp_dir, on_kaggle, output_root
 from probes_rh.rewards.features import extract_surface_features
 from probes_rh.rewards.gold import GoldRMConfig, GoldRewardModel
 from probes_rh.rewards.proxy import ProxyRewardConfig, score_proxy_batch
@@ -41,7 +45,6 @@ def load_prompts(path: Path, limit: int | None) -> list[dict]:
 
 
 def pick_devices(force_device: str | None) -> tuple[str, str | None]:
-    """Return (policy_device, gold_device). gold_device may equal policy_device."""
     if force_device is not None:
         return force_device, force_device
     if not torch.cuda.is_available():
@@ -52,28 +55,51 @@ def pick_devices(force_device: str | None) -> tuple[str, str | None]:
     return "cuda:0", "cuda:0"
 
 
+def resolve_out(path: str) -> Path:
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    # Prefer Kaggle working outputs for relative paths
+    if on_kaggle() and not str(p).startswith("data/"):
+        return output_root() / p if p.parts[0] != "outputs" else Path("/kaggle/working") / p
+    return p
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--model", default="Qwen/Qwen3-0.6B")
     p.add_argument("--adapter", default=None, help="LoRA / final checkpoint dir")
     p.add_argument("--prompts", default="data/exp3/prompts.jsonl")
-    p.add_argument("--out", default="outputs/exp3a_grpo/rollouts.jsonl")
+    p.add_argument(
+        "--out",
+        default=None,
+        help="Rollouts jsonl (default: <output_root>/exp3a_grpo/rollouts.jsonl)",
+    )
+    p.add_argument("--exp-name", default="exp3a_grpo")
     p.add_argument("--limit", type=int, default=128)
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--temperature", type=float, default=0.9)
     p.add_argument("--gold-rm", default="Skywork/Skywork-Reward-V2-Llama-3.2-3B")
     p.add_argument("--skip-gold", action="store_true")
-    p.add_argument(
-        "--device",
-        default=None,
-        help="Force a single device for both policy and gold (disables dual-GPU split)",
-    )
+    p.add_argument("--device", default=None)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--keep-think",
+        action="store_true",
+        help="Do not strip <think> blocks from completions",
+    )
     args = p.parse_args()
+
+    if args.out is None:
+        out_path = exp_dir(args.exp_name) / "rollouts.jsonl"
+    else:
+        out_path = resolve_out(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.manual_seed(args.seed)
     policy_device, gold_device = pick_devices(args.device)
     print(f"policy device={policy_device}  gold device={gold_device}")
+    print(f"writing rollouts to {out_path}")
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     if tok.pad_token is None:
@@ -94,7 +120,6 @@ def main() -> None:
         model.to(policy_device)
     model.eval()
 
-    # Load gold RM on the second GPU while policy stays on the first (when dual).
     gold = None
     if not args.skip_gold:
         gold = GoldRewardModel(
@@ -108,18 +133,7 @@ def main() -> None:
         prompt = row["prompt"] if isinstance(row["prompt"], str) else row["prompt"]
         if isinstance(prompt, list):
             prompt = prompt[0]["content"]
-        messages = [{"role": "user", "content": prompt}]
-        try:
-            text = tok.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-        except TypeError:
-            text = tok.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
+        text = apply_chat_prompt(tok, prompt, enable_thinking=False)
         enc = tok(text, return_tensors="pt")
         enc = {k: v.to(policy_device) for k, v in enc.items()}
         with torch.inference_mode():
@@ -132,7 +146,10 @@ def main() -> None:
                 pad_token_id=tok.pad_token_id,
             )
         gen = out_ids[0, enc["input_ids"].shape[1] :]
-        completion = tok.decode(gen, skip_special_tokens=True)
+        completion_raw = tok.decode(gen, skip_special_tokens=True)
+        completion = (
+            completion_raw if args.keep_think else strip_think(completion_raw)
+        )
         feats = extract_surface_features(completion)
         proxy = score_proxy_batch(
             [completion],
@@ -143,6 +160,7 @@ def main() -> None:
                 "prompt_id": row.get("prompt_id", ""),
                 "prompt": prompt,
                 "completion": completion,
+                "completion_raw": completion_raw,
                 "proxy": proxy,
                 "features": feats.as_dict(),
             }
@@ -164,8 +182,6 @@ def main() -> None:
         for r in records:
             r["gold"] = None
 
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")

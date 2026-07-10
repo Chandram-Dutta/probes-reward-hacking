@@ -20,10 +20,12 @@ from probes_rh.eval.activations import ResidualCapture, collect_for_pair, load_p
 from probes_rh.eval.probes import (
     evaluate_feature_baselines,
     evaluate_layer_probes,
+    gold_residual,
     make_hack_labels,
     results_to_rows,
     shuffled_control,
 )
+from probes_rh.paths import exp_dir
 
 
 def load_rollouts(path: Path, limit: int | None = None) -> list[dict]:
@@ -38,35 +40,72 @@ def load_rollouts(path: Path, limit: int | None = None) -> list[dict]:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--rollouts", default="outputs/exp3a_grpo/rollouts.jsonl")
+    p.add_argument("--rollouts", default=None)
     p.add_argument("--model", default="Qwen/Qwen3-0.6B")
     p.add_argument("--adapter", default=None)
-    p.add_argument("--out", default="outputs/exp3a_grpo/probe_results.json")
+    p.add_argument("--out", default=None)
+    p.add_argument("--exp-name", default="exp3a_grpo")
     p.add_argument("--limit", type=int, default=None)
-    p.add_argument("--label-mode", default="quantile", choices=["quantile", "residual"])
+    p.add_argument(
+        "--label-mode",
+        default="residual",
+        choices=["quantile", "residual", "residual_high_proxy"],
+        help="Exp 3b default: residual (gold after removing linear proxy)",
+    )
+    p.add_argument("--residual-q", type=float, default=0.25)
     p.add_argument("--layers", default="mid_late", help="all | mid_late | comma indices")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
-    rows = load_rollouts(Path(args.rollouts), args.limit)
+    rollouts_path = (
+        Path(args.rollouts)
+        if args.rollouts
+        else exp_dir(args.exp_name) / "rollouts.jsonl"
+    )
+    out_path = (
+        Path(args.out)
+        if args.out
+        else exp_dir(args.exp_name) / f"probe_results_{args.label_mode}.json"
+    )
+
+    rows = load_rollouts(rollouts_path, args.limit)
     rows = [r for r in rows if r.get("gold") is not None]
     if len(rows) < 20:
         raise SystemExit(f"need more scored rollouts, got {len(rows)}")
 
     proxy = np.array([r["proxy"] for r in rows], dtype=np.float64)
     gold = np.array([r["gold"] for r in rows], dtype=np.float64)
-    y = make_hack_labels(proxy, gold, mode=args.label_mode)
+    resid = gold_residual(proxy, gold)
+    y = make_hack_labels(
+        proxy,
+        gold,
+        mode=args.label_mode,
+        residual_q=args.residual_q,
+    )
     groups = np.array([r.get("prompt_id", str(i)) for i, r in enumerate(rows)])
 
-    feat_names = ["n_chars", "n_tokens_est", "agreement", "confidence", "politeness", "fluff_total"]
+    feat_names = [
+        "n_chars",
+        "n_tokens_est",
+        "agreement",
+        "confidence",
+        "politeness",
+        "fluff_total",
+    ]
     feat_mat = np.array(
         [[r["features"][k] for k in feat_names] for r in rows], dtype=np.float64
     )
-    # include proxy itself as a baseline feature column
-    feat_names_ext = feat_names + ["proxy"]
-    feat_mat_ext = np.concatenate([feat_mat, proxy[:, None]], axis=1)
+    # baselines: surface + proxy + gold residual scalar
+    feat_names_ext = feat_names + ["proxy", "gold_residual"]
+    feat_mat_ext = np.concatenate(
+        [feat_mat, proxy[:, None], resid[:, None]], axis=1
+    )
 
-    print(f"n={len(rows)}  hack rate={y.mean():.3f}  corr(proxy,gold)={np.corrcoef(proxy,gold)[0,1]:.3f}")
+    print(
+        f"n={len(rows)}  hack_rate={y.mean():.3f}  n_pos={int(y.sum())}  "
+        f"corr(proxy,gold)={np.corrcoef(proxy, gold)[0,1]:.3f}  "
+        f"label_mode={args.label_mode}"
+    )
 
     baseline_results = evaluate_feature_baselines(
         feat_mat_ext, feat_names_ext, y, groups, seed=args.seed
@@ -75,7 +114,6 @@ def main() -> None:
     model, tok = load_policy(args.model, adapter_path=args.adapter)
     capture = ResidualCapture()
 
-    # collect activations
     layer_store: dict[int, list[np.ndarray]] = {}
     last_prompt_store: dict[int, list[np.ndarray]] = {}
     for r in tqdm(rows, desc="activations"):
@@ -107,7 +145,9 @@ def main() -> None:
         L: np.stack(layer_store[L], axis=0) for L in keep if L in layer_store
     }
     last_prompt_features = {
-        L: np.stack(last_prompt_store[L], axis=0) for L in keep if L in last_prompt_store
+        L: np.stack(last_prompt_store[L], axis=0)
+        for L in keep
+        if L in last_prompt_store
     }
 
     probe_mean = evaluate_layer_probes(layer_features, y, groups, seed=args.seed)
@@ -118,7 +158,6 @@ def main() -> None:
     for r in probe_last:
         r.name = f"last_prompt_{r.name}"
 
-    # shuffled control on best mean layer if available
     control = None
     if probe_mean:
         best = max(probe_mean, key=lambda r: r.auc if r.auc == r.auc else -1)
@@ -134,16 +173,19 @@ def main() -> None:
     out = {
         "n": len(rows),
         "hack_rate": float(y.mean()),
+        "n_pos": int(y.sum()),
         "proxy_gold_corr": float(np.corrcoef(proxy, gold)[0, 1]),
         "label_mode": args.label_mode,
+        "residual_q": args.residual_q,
         "results": results_to_rows(all_results),
     }
-    out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
 
     print("\n=== results (AUC) ===")
-    for row in sorted(out["results"], key=lambda x: -(x["auc"] if x["auc"] == x["auc"] else -1)):
+    for row in sorted(
+        out["results"], key=lambda x: -(x["auc"] if x["auc"] == x["auc"] else -1)
+    ):
         print(f"{row['name']:40s}  {row['auc']:.3f}")
     print(f"wrote {out_path}")
 

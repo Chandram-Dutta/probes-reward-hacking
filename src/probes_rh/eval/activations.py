@@ -98,18 +98,12 @@ def collect_for_pair(
     max_length: int = 1024,
     enable_thinking: bool = False,
 ) -> ActivationBundle:
-    messages = [{"role": "user", "content": prompt}]
-    try:
-        prompt_text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=enable_thinking,
-        )
-    except TypeError:
-        prompt_text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+    from probes_rh.chat import apply_chat_prompt, strip_think
+
+    prompt_text = apply_chat_prompt(
+        tokenizer, prompt, enable_thinking=enable_thinking
+    )
+    completion = strip_think(completion)
 
     full_text = prompt_text + completion
     enc_prompt = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=False)

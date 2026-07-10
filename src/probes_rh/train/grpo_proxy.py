@@ -14,17 +14,24 @@ from transformers import AutoTokenizer
 from trl import GRPOConfig, GRPOTrainer
 
 from probes_rh.data.prep_prompts import load_jsonl
+from probes_rh.paths import exp_dir, on_kaggle
 from probes_rh.rewards.proxy import ProxyRewardConfig, make_proxy_reward_fn
 
 
 DEFAULT_POLICY = "Qwen/Qwen3-0.6B"
 
 
+def default_train_output_dir() -> str:
+    if on_kaggle():
+        return str(exp_dir("exp3a_grpo"))
+    return "outputs/exp3a_grpo"
+
+
 @dataclass
 class Exp3TrainConfig:
     model_id: str = DEFAULT_POLICY
     data_path: str = "data/exp3/prompts_trl.jsonl"
-    output_dir: str = "outputs/exp3a_grpo"
+    output_dir: str = ""  # filled in __post_init__-like via train()
     max_steps: int = 100
     per_device_train_batch_size: int = 1
     gradient_accumulation_steps: int = 4
@@ -212,6 +219,8 @@ def save_run_config(cfg: Exp3TrainConfig, path: Path) -> None:
 
 def train(cfg: Exp3TrainConfig | None = None) -> dict[str, Any]:
     cfg = cfg or Exp3TrainConfig()
+    if not cfg.output_dir:
+        cfg.output_dir = default_train_output_dir()
     out = Path(cfg.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 

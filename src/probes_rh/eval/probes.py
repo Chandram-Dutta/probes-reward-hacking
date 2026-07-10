@@ -104,31 +104,42 @@ def shuffled_control(
     return ProbeResult(name="shuffled_labels", auc=auc, n_train=n_tr, n_test=n_te)
 
 
+def gold_residual(proxy: np.ndarray, gold: np.ndarray) -> np.ndarray:
+    """gold - linear_prediction(proxy). Negative = worse gold than proxy suggests."""
+    if np.std(proxy) < 1e-8:
+        return gold - gold.mean()
+    coef = np.cov(proxy, gold, bias=True)[0, 1] / (np.var(proxy) + 1e-8)
+    intercept = gold.mean() - coef * proxy.mean()
+    return gold - (coef * proxy + intercept)
+
+
 def make_hack_labels(
     proxy: np.ndarray,
     gold: np.ndarray,
     mode: str = "quantile",
     proxy_q: float = 0.75,
     gold_q: float = 0.25,
+    residual_q: float = 0.25,
 ) -> np.ndarray:
-    """Label high-proxy / low-gold rollouts as hacked (1)."""
+    """Label overoptimized / hacked rollouts.
+
+    Modes:
+      - quantile: high proxy AND low gold (Exp 3a; proxy baseline is strong by design)
+      - residual: worst gold residual after regressing gold ~ proxy (Exp 3b default)
+      - residual_high_proxy: residual low AND proxy above median (stricter)
+    """
     if mode == "quantile":
         hi = proxy >= np.quantile(proxy, proxy_q)
         lo = gold <= np.quantile(gold, gold_q)
         return (hi & lo).astype(np.int64)
-    if mode == "residual":
-        # residual after linear fit gold ~ proxy
-        if np.std(proxy) < 1e-8:
-            resid = gold - gold.mean()
-        else:
-            coef = np.cov(proxy, gold, bias=True)[0, 1] / (np.var(proxy) + 1e-8)
-            intercept = gold.mean() - coef * proxy.mean()
-            pred = coef * proxy + intercept
-            resid = gold - pred
-        # most negative residual among high proxy
+    if mode in ("residual", "residual_high_proxy"):
+        resid = gold_residual(proxy, gold)
+        thr = np.quantile(resid, residual_q)
+        low = resid <= thr
+        if mode == "residual":
+            return low.astype(np.int64)
         hi = proxy >= np.median(proxy)
-        thr = np.quantile(resid[hi], 0.25) if hi.any() else np.quantile(resid, 0.25)
-        return ((resid <= thr) & hi).astype(np.int64)
+        return (low & hi).astype(np.int64)
     raise ValueError(f"unknown mode: {mode}")
 
 

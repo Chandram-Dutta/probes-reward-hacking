@@ -29,6 +29,11 @@ notes/
 *.bin
 *.safetensors
 /checkpoints/
+/exp3a_*.zip
+/*_pack.zip
+/*_light.zip
+/*_results.zip
+/*_checkpoint.zip
 
 # OS / editor
 .DS_Store

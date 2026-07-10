@@ -1,19 +1,19 @@
 # probes-reward-hacking
 
-Research on whether **linear probes** on LLM activations detect **reward hacking** — first under verifiable rewards (RLVR), now under **proxy / unverifiable** rewards.
+Research on whether **linear probes** on LLM activations detect **reward hacking** under **proxy / unverifiable** rewards.
 
-## Current focus: Experiment 3 (proxy overoptimization)
+## Current focus
 
-See [`notes/exp3_unverifiable_proxy.md`](notes/exp3_unverifiable_proxy.md).
-
-**Question:** When GRPO only sees a misspecified proxy (length + flattery), and a frozen gold RM scores quality offline, do policy probes beat output baselines?
+- **Exp 3a** (done pilot): proxy GRPO + gold RM + probes — see local `notes/`  
+- **Exp 3b** (next): residual labels, more rollouts, thinking strip, durable Kaggle outputs
 
 | Role | Default |
 |---|---|
-| Policy | `Qwen/Qwen3-0.6B` (thinking off) |
+| Policy | `Qwen/Qwen3-0.6B` (thinking stripped) |
 | Train reward | Engineered proxy (never gold) |
 | Gold | `Skywork/Skywork-Reward-V2-Llama-3.2-3B` (offline only) |
 | Target GPU | Kaggle dual T4 |
+| Artifacts | `/kaggle/working/outputs/<exp_name>/` |
 
 ## Setup
 
@@ -22,70 +22,97 @@ uv sync
 # or: pip install -e .
 ```
 
-### Kaggle (quick)
+### Kaggle: outputs that you can reuse after restart
 
-```python
-!git clone https://github.com/Chandram-Dutta/probes-reward-hacking.git
-%cd probes-reward-hacking
-!git pull
+Kaggle **deletes `/kaggle/working` when the session dies**. Within a session, always write under:
 
-# fixes Kaggle's old torchao (breaks peft LoRA) + installs deps
-!python scripts/kaggle_setup.py
-
-!python scripts/prepare_data.py --max-prompts 2000
-!python scripts/train_grpo.py --max-steps 100 --output-dir /kaggle/working/outputs/exp3a_grpo
+```text
+/kaggle/working/outputs/exp3a_grpo/
 ```
 
-If LoRA fails with `incompatible version of torchao`, run:
+**Before you leave / restart:**
+
+```python
+%cd /kaggle/working/probes-reward-hacking
+!python scripts/kaggle_pack.py --name exp3a_grpo          # full (adapter + files)
+# or light only:
+!python scripts/kaggle_pack.py --name exp3a_grpo --light
+```
+
+Download the zip from `/kaggle/working/`. After a new session, re-upload it (or attach as a Dataset) and restore:
+
+```python
+%cd /kaggle/working/probes-reward-hacking
+!git pull
+!python scripts/kaggle_setup.py
+!python scripts/kaggle_restore.py --zip /kaggle/working/exp3a_grpo_pack.zip
+# if Dataset: --zip /kaggle/input/<dataset-name>/exp3a_grpo_pack.zip
+!ls /kaggle/working/outputs/exp3a_grpo/final
+```
+
+### Kaggle: Exp 3b from existing 3a checkpoint (no retrain)
+
+```python
+%cd /kaggle/working
+!rm -rf probes-reward-hacking
+!git clone https://github.com/Chandram-Dutta/probes-reward-hacking.git
+%cd probes-reward-hacking
+!python scripts/kaggle_setup.py
+!python scripts/prepare_data.py --max-prompts 2000 --out-dir data/exp3
+
+# restore checkpoint zip you uploaded
+!python scripts/kaggle_restore.py --zip /kaggle/working/exp3a_checkpoint.zip
+
+# more rollouts (thinking stripped in proxy/features)
+!python scripts/score_rollouts.py \
+  --model Qwen/Qwen3-0.6B \
+  --adapter /kaggle/working/outputs/exp3a_grpo/final \
+  --prompts data/exp3/prompts.jsonl \
+  --out /kaggle/working/outputs/exp3a_grpo/rollouts_3b.jsonl \
+  --limit 1024
+
+# residual-label probes (Exp 3b default)
+!python scripts/run_probes.py \
+  --rollouts /kaggle/working/outputs/exp3a_grpo/rollouts_3b.jsonl \
+  --model Qwen/Qwen3-0.6B \
+  --adapter /kaggle/working/outputs/exp3a_grpo/final \
+  --label-mode residual \
+  --out /kaggle/working/outputs/exp3a_grpo/probe_results_residual.json
+
+!python scripts/kaggle_pack.py --name exp3a_grpo --light
+```
+
+If LoRA fails with `incompatible version of torchao`:
 
 ```python
 !pip uninstall -y torchao
-# or: !python scripts/kaggle_setup.py
 ```
 
-If you see `No module named 'probes_rh'`, re-clone / `git pull` from repo root.
-
-## Pipeline
+## Local pipeline
 
 ```bash
-# 1) prompts
-uv run python scripts/prepare_data.py --max-prompts 2000
-
-# 2) GRPO vs proxy (Kaggle dual T4: auto multi-GPU via accelerate)
-uv run python scripts/train_grpo.py --max-steps 100
-# force one GPU:  uv run python scripts/train_grpo.py --single-gpu --max-steps 100
-
-# 3) rollouts + gold scores (policy on cuda:0, gold RM on cuda:1 when 2 GPUs)
-uv run python scripts/score_rollouts.py \
-  --adapter outputs/exp3a_grpo/final \
-  --limit 256
-
-# 4) probes vs baselines
-uv run python scripts/run_probes.py \
-  --adapter outputs/exp3a_grpo/final
+python scripts/prepare_data.py --max-prompts 2000
+python scripts/train_grpo.py --max-steps 100
+python scripts/score_rollouts.py --adapter outputs/exp3a_grpo/final --limit 256
+python scripts/run_probes.py --adapter outputs/exp3a_grpo/final --label-mode residual
 ```
 
-### Dual T4 (Kaggle)
+### Dual T4
 
-- **Train:** `train_grpo.py` detects `torch.cuda.device_count() >= 2` and re-launches with `accelerate launch --multi_gpu --num_processes=2`.
-- **Score:** generation on `cuda:0`, frozen gold RM on `cuda:1` (no sequential free/reload).
-- **Probes:** single GPU is enough (activation dumps).
+- **Train:** auto `accelerate` multi-GPU when 2+ devices.  
+- **Score:** policy `cuda:0`, gold `cuda:1`.  
+- **Probes:** one GPU.
 
-Do **not** feed gold into training. Gold is analysis-only.
+Gold is analysis-only — never in the GRPO advantage.
 
 ## Package layout
 
 ```
 src/probes_rh/
-  data/          # prompt prep
-  rewards/       # proxy + gold RM
-  train/         # GRPO config
-  eval/          # activations, probes, baselines
-scripts/         # CLI entrypoints
-notes/           # experiment writeups
+  paths.py       # /kaggle/working/outputs helpers
+  chat.py        # thinking-off + strip <think>
+  data/ rewards/ train/ eval/
+scripts/
+  kaggle_setup.py kaggle_restore.py kaggle_pack.py
+  prepare_data.py train_grpo.py score_rollouts.py run_probes.py
 ```
-
-## Notes
-
-- Scripts first; convert to notebooks for Colab/Kaggle as needed.
-- Ask / fix the training environment before long GPU runs.

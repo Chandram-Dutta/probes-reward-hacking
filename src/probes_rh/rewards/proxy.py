@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from probes_rh.chat import strip_think
 from probes_rh.rewards.features import completion_text, extract_surface_features
 
 
@@ -49,7 +50,9 @@ def score_proxy_batch(
     within the batch so GRPO sees relative advantages rather than raw scale.
     """
     cfg = config or ProxyRewardConfig()
-    feats = [extract_surface_features(completion_text(c)) for c in completions]
+    feats = [
+        extract_surface_features(strip_think(completion_text(c))) for c in completions
+    ]
     if not feats:
         return []
 

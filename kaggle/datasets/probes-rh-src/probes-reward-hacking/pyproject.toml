@@ -1,0 +1,38 @@
+[project]
+name = "probes-reward-hacking"
+version = "0.2.0"
+description = "Linear probes for reward hacking under verifiable and proxy (unverifiable) rewards"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.4.0",
+    "transformers>=4.51.0",
+    "trl>=0.18.0",
+    "peft>=0.14.0",
+    "datasets>=3.0.0",
+    "accelerate>=1.0.0",
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.9.0",
+    "tqdm>=4.66.0",
+    "pyyaml>=6.0",
+    "safetensors>=0.4.0",
+]
+
+[project.optional-dependencies]
+dev = ["ipykernel>=6.29.0", "jupyter>=1.0.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# hatchling discovers src/probes_rh automatically (src layout)
+[tool.hatch.build.targets.wheel]
+packages = ["src/probes_rh"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/probes_rh" = "probes_rh"
+
+[tool.uv]
+package = true

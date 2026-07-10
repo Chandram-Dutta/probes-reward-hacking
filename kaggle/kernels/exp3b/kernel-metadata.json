@@ -1,0 +1,18 @@
+{
+  "id": "chandramdutta/probes-rh-exp3b",
+  "title": "probes-rh-exp3b",
+  "code_file": "run_exp3b.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "chandramdutta/probes-rh-src",
+    "chandramdutta/probes-rh-exp3a-ckpt"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": []
+}

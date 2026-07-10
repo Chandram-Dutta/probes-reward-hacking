@@ -1,0 +1,49 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+.venv/
+
+# Local / private project files (do not push)
+AGENTS.md
+notes/
+.claude/
+.grok/
+
+# Data & experiment artifacts (repo-root only — do NOT ignore src/probes_rh/data/)
+/data/
+/outputs/
+/wandb/
+/runs/
+*.pt
+*.bin
+*.safetensors
+/checkpoints/
+/exp3a_*.zip
+/*_pack.zip
+/*_light.zip
+/*_results.zip
+/*_checkpoint.zip
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Env / secrets
+.env
+.env.*

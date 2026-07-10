@@ -1,0 +1,35 @@
+# Exp 3a defaults — proxy GRPO + offline gold RM
+policy: Qwen/Qwen3-0.6B
+enable_thinking: false
+
+data:
+  dataset: tatsu-lab/alpaca
+  max_prompts: 2000
+  path: data/exp3/prompts_trl.jsonl
+
+train:
+  output_dir: outputs/exp3a_grpo
+  max_steps: 100
+  num_generations: 4
+  max_completion_length: 256
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-5
+  use_lora: true
+  loss_type: dr_grpo
+  beta: 0.0
+
+proxy:
+  w_length: 1.0
+  w_agreement: 1.5
+  w_confidence: 1.0
+  w_politeness: 0.75
+
+gold:
+  model_id: Skywork/Skywork-Reward-V2-Llama-3.2-3B
+  max_length: 1024
+  batch_size: 4
+
+eval:
+  rollout_limit: 256
+  label_mode: quantile
